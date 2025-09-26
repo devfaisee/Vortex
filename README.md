@@ -4,6 +4,8 @@
 [![Downloads](https://img.shields.io/npm/dm/vortex-spinner.svg)](https://npmjs.org/package/vortex-spinner)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue.svg)](https://github.com/devfaisee/Vortex)
+[![npm](https://img.shields.io/badge/npm-Package-red.svg)](https://www.npmjs.com/package/vortex-spinner)
 
 **The most advanced, beautiful, and developer-friendly spinner library for Node.js and browsers.**
 
@@ -374,10 +376,10 @@ success('Processing complete!');
 ## 🔗 Links
 
 - **npm Package**: https://www.npmjs.com/package/vortex-spinner
-- **GitHub Repository**: https://github.com/yourusername/vortex-spinner
-- **Documentation**: https://github.com/yourusername/vortex-spinner#readme
-- **Issues**: https://github.com/yourusername/vortex-spinner/issues
-- **Changelog**: https://github.com/yourusername/vortex-spinner/releases
+- **GitHub Repository**: https://github.com/devfaisee/Vortex
+- **Documentation**: https://github.com/devfaisee/Vortex#readme
+- **Issues**: https://github.com/devfaisee/Vortex/issues
+- **Changelog**: https://github.com/devfaisee/Vortex/releases
 
 ## 🤝 Contributing
 
