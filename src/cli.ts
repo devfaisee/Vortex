@@ -35,8 +35,13 @@ function listSpinners(): void {
 }
 
 async function runDemo(): Promise<void> {
-  const { runAllDemos } = await import('./demo.js');
-  await runAllDemos();
+  console.log('🌀 Vortex Spinner Demo');
+  console.log('\nFor comprehensive examples, check:');
+  console.log('• examples/basic-usage.js');
+  console.log('• examples/framework-examples.js');
+  console.log('• examples/advanced-usage.js');
+  console.log('• examples/performance-demo.js');
+  console.log('\nRun: node examples/basic-usage.js');
 }
 
 async function main(): Promise<void> {

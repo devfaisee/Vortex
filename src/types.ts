@@ -1,6 +1,6 @@
 export interface VortexOptions {
   text?: string;
-  spinner?: SpinnerType;
+  spinner?: SpinnerType | string;
   color?: string;
   interval?: number;
   stream?: NodeJS.WriteStream;
@@ -11,6 +11,10 @@ export interface VortexOptions {
   suffixText?: string;
   predictive?: boolean;
   adaptive?: boolean;
+  gradient?: boolean;
+  rainbow?: boolean;
+  bold?: boolean;
+  dim?: boolean;
 }
 
 export interface SpinnerFrame {
@@ -21,7 +25,8 @@ export interface SpinnerFrame {
 export interface SpinnerType {
   interval: number;
   frames: string[];
-  adaptive?: boolean;
+  adaptive: boolean;
+  description?: string;
 }
 
 export interface ProgressData {
@@ -33,11 +38,12 @@ export interface ProgressData {
   sampleTimes: number[];
 }
 
-export interface PredictionResult {
+export interface ProgressPrediction {
   percentage: number;
   estimatedTimeLeft: number;
-  estimatedTotal: number;
   confidence: number;
+  trend: 'accelerating' | 'steady' | 'slowing';
+  accuracy: number;
 }
 
 export interface TerminalInfo {
@@ -53,4 +59,26 @@ export interface AdaptiveConfig {
   compactMode: boolean;
   useUnicode: boolean;
   colorMode: 'none' | 'basic' | 'ansi256' | 'truecolor';
+}
+
+export interface SpinnerStats {
+  startTime: number;
+  totalFrames: number;
+  averageFrameTime: number;
+  predictedCompletion: number;
+}
+
+export interface AnimationConfig {
+  useGradients: boolean;
+  useRainbow: boolean;
+  colorTransitions: boolean;
+  smoothAnimation: boolean;
+  adaptiveSpeed: boolean;
+}
+
+export interface PerformanceMetrics {
+  renderTime: number;
+  memoryUsage: number;
+  cpuUsage: number;
+  frameRate: number;
 }

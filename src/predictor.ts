@@ -1,163 +1,348 @@
-import { ProgressData, PredictionResult } from './types.js';
+import { ProgressPrediction, SpinnerStats, PerformanceMetrics } from './types.js';
 
+/**
+ * Progress prediction engine with statistical analysis
+ * Zero dependencies, high accuracy
+ */
 export class ProgressPredictor {
-  private progressData: ProgressData;
-  private readonly maxSamples = 20;
-  private readonly minSamplesForPrediction = 3;
+  private startTime: number = 0;
+  private samples: number[] = [];
+  private progressHistory: Array<{ time: number; progress: number }> = [];
+  private currentProgress: number = 0;
+  private totalExpected: number = 100;
+  private confidence: number = 0;
+  private trend: 'accelerating' | 'steady' | 'slowing' = 'steady';
+  private accuracy: number = 0;
+  private performanceMetrics: PerformanceMetrics;
 
   constructor() {
-    this.progressData = {
-      current: 0,
-      total: 0,
-      startTime: Date.now(),
-      lastUpdate: Date.now(),
-      samples: [],
-      sampleTimes: []
+    this.performanceMetrics = {
+      renderTime: 0,
+      memoryUsage: 0,
+      cpuUsage: 0,
+      frameRate: 60
     };
   }
 
-  public updateProgress(current: number, total?: number): void {
-    const now = Date.now();
+  /**
+   * Reset predictor for new operation
+   */
+  public reset(): void {
+    this.startTime = Date.now();
+    this.samples = [];
+    this.progressHistory = [];
+    this.currentProgress = 0;
+    this.confidence = 0;
+    this.trend = 'steady';
+    this.accuracy = 0;
+  }
+
+  /**
+   * Update progress with current value
+   */
+  public updateProgress(current: number, total: number = 100): void {
+    this.totalExpected = total;
+    this.currentProgress = Math.min(current, total);
     
-    if (total !== undefined) {
-      this.progressData.total = total;
+    const now = Date.now();
+    const elapsed = now - this.startTime;
+    
+    this.progressHistory.push({
+      time: elapsed,
+      progress: (this.currentProgress / this.totalExpected) * 100
+    });
+
+    // Keep only recent history for better prediction
+    if (this.progressHistory.length > 20) {
+      this.progressHistory = this.progressHistory.slice(-20);
     }
 
-    this.progressData.current = current;
-    this.progressData.lastUpdate = now;
-
-    // Add sample for prediction
-    this.addSample(current, now);
+    this.updateTrend();
+    this.updateConfidence();
+    this.updateAccuracy();
   }
 
-  private addSample(value: number, timestamp: number): void {
-    this.progressData.samples.push(value);
-    this.progressData.sampleTimes.push(timestamp);
+  /**
+   * Simulate progress for demo purposes
+   */
+  public simulateProgress(): void {
+    const elapsed = Date.now() - this.startTime;
+    const baseProgress = Math.min((elapsed / 10000) * 100, 100); // 10 second simulation
+    
+    // Add realistic variations
+    const variation = Math.sin(elapsed / 1000) * 5;
+    const networkDelay = Math.random() * 10;
+    
+    this.currentProgress = Math.max(0, Math.min(100, baseProgress + variation - networkDelay));
+    
+    this.progressHistory.push({
+      time: elapsed,
+      progress: this.currentProgress
+    });
 
-    // Keep only recent samples
-    if (this.progressData.samples.length > this.maxSamples) {
-      this.progressData.samples.shift();
-      this.progressData.sampleTimes.shift();
+    if (this.progressHistory.length > 15) {
+      this.progressHistory = this.progressHistory.slice(-15);
     }
+
+    this.updateTrend();
+    this.updateConfidence();
+    this.updateAccuracy();
   }
 
-  public predict(): PredictionResult {
-    const { current, total, samples, sampleTimes, startTime } = this.progressData;
-
-    if (samples.length < this.minSamplesForPrediction) {
+  /**
+   * Get current prediction with enhanced accuracy
+   */
+  public predict(): ProgressPrediction {
+    if (this.progressHistory.length < 2) {
       return {
-        percentage: total > 0 ? (current / total) * 100 : 0,
+        percentage: 0,
         estimatedTimeLeft: 0,
-        estimatedTotal: 0,
-        confidence: 0
+        confidence: 0,
+        trend: 'steady',
+        accuracy: 0
       };
     }
 
-    const percentage = total > 0 ? Math.min((current / total) * 100, 100) : 0;
+    const currentTime = Date.now() - this.startTime;
+    const recentHistory = this.progressHistory.slice(-10);
     
-    // Calculate velocity using linear regression
-    const velocity = this.calculateVelocity();
-    const confidence = this.calculateConfidence();
-
-    let estimatedTimeLeft = 0;
-    let estimatedTotal = 0;
-
-    if (velocity > 0 && total > 0) {
-      const remaining = total - current;
-      estimatedTimeLeft = remaining / velocity;
-      estimatedTotal = (Date.now() - startTime) + estimatedTimeLeft;
-    } else if (velocity > 0) {
-      // Estimate total based on current progress and time
-      const elapsed = Date.now() - startTime;
-      const estimatedTotalProgress = current + (velocity * (elapsed / 1000));
-      estimatedTotal = elapsed * (estimatedTotalProgress / current);
-    }
-
-    return {
-      percentage: Math.round(percentage * 100) / 100,
-      estimatedTimeLeft: Math.max(0, estimatedTimeLeft),
-      estimatedTotal: Math.max(0, estimatedTotal),
-      confidence: Math.round(confidence * 100) / 100
-    };
-  }
-
-  private calculateVelocity(): number {
-    const { samples, sampleTimes } = this.progressData;
+    // Calculate velocity using weighted average
+    let totalWeight = 0;
+    let weightedVelocity = 0;
     
-    if (samples.length < 2) return 0;
-
-    // Use linear regression to calculate velocity
-    const n = samples.length;
-    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-
-    for (let i = 0; i < n; i++) {
-      const x = (sampleTimes[i] - sampleTimes[0]) / 1000; // Convert to seconds
-      const y = samples[i];
-      
-      sumX += x;
-      sumY += y;
-      sumXY += x * y;
-      sumXX += x * x;
-    }
-
-    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-    return isNaN(slope) ? 0 : Math.max(0, slope);
-  }
-
-  private calculateConfidence(): number {
-    const { samples } = this.progressData;
-    
-    if (samples.length < this.minSamplesForPrediction) return 0;
-
-    // Calculate variance in velocity to determine confidence
-    const velocities: number[] = [];
-    
-    for (let i = 1; i < samples.length; i++) {
-      const timeDiff = (this.progressData.sampleTimes[i] - this.progressData.sampleTimes[i - 1]) / 1000;
-      const valueDiff = samples[i] - samples[i - 1];
+    for (let i = 1; i < recentHistory.length; i++) {
+      const timeDiff = recentHistory[i].time - recentHistory[i - 1].time;
+      const progressDiff = recentHistory[i].progress - recentHistory[i - 1].progress;
       
       if (timeDiff > 0) {
-        velocities.push(valueDiff / timeDiff);
+        const velocity = progressDiff / timeDiff;
+        const weight = Math.exp(-(recentHistory.length - i) * 0.2); // Recent samples have higher weight
+        
+        weightedVelocity += velocity * weight;
+        totalWeight += weight;
       }
     }
 
-    if (velocities.length === 0) return 0;
+    const averageVelocity = totalWeight > 0 ? weightedVelocity / totalWeight : 0;
+    const remainingProgress = 100 - this.currentProgress;
+    const estimatedTimeLeft = averageVelocity > 0 ? remainingProgress / averageVelocity : 0;
 
-    const avgVelocity = velocities.reduce((a, b) => a + b, 0) / velocities.length;
-    const variance = velocities.reduce((acc, v) => acc + Math.pow(v - avgVelocity, 2), 0) / velocities.length;
-    const standardDeviation = Math.sqrt(variance);
-
-    // Higher confidence when velocity is more consistent
-    const coefficientOfVariation = avgVelocity !== 0 ? standardDeviation / Math.abs(avgVelocity) : 1;
-    const confidence = Math.max(0, 1 - Math.min(1, coefficientOfVariation));
-
-    // Boost confidence with more samples
-    const sampleBonus = Math.min(0.3, (samples.length - this.minSamplesForPrediction) * 0.05);
-    
-    return Math.min(1, confidence + sampleBonus);
+    return {
+      percentage: Math.round(this.currentProgress * 10) / 10,
+      estimatedTimeLeft: Math.max(0, estimatedTimeLeft),
+      confidence: this.confidence,
+      trend: this.trend,
+      accuracy: this.accuracy
+    };
   }
 
+  /**
+   * Format time estimate in human-readable format
+   */
   public formatTimeEstimate(milliseconds: number): string {
-    if (milliseconds < 1000) return '<1s';
+    if (milliseconds < 1000) {
+      return '<1s';
+    }
     
     const seconds = Math.round(milliseconds / 1000);
     
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m ${seconds % 60}s`;
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
     
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes < 60) {
+      return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+    }
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    
+    return `${hours}h ${remainingMinutes}m`;
   }
 
-  public reset(): void {
-    this.progressData = {
-      current: 0,
-      total: 0,
-      startTime: Date.now(),
-      lastUpdate: Date.now(),
-      samples: [],
-      sampleTimes: []
+  /**
+   * Get progress bar visualization
+   */
+  public getProgressBar(width: number = 20): string {
+    const percentage = this.currentProgress;
+    const filled = Math.round((percentage / 100) * width);
+    const empty = width - filled;
+    
+    const filledChar = '█';
+    const emptyChar = '░';
+    const partialChars = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+    
+    let bar = filledChar.repeat(filled);
+    
+    // Add partial character for smoother animation
+    if (empty > 0 && filled < width) {
+      const partial = ((percentage / 100) * width) - filled;
+      const partialIndex = Math.floor(partial * partialChars.length);
+      if (partialIndex > 0 && partialIndex < partialChars.length) {
+        bar += partialChars[partialIndex];
+        bar += emptyChar.repeat(empty - 1);
+      } else {
+        bar += emptyChar.repeat(empty);
+      }
+    }
+    
+    return bar;
+  }
+
+  /**
+   * Get detailed progress information
+   */
+  public getDetailedProgress(): string {
+    const prediction = this.predict();
+    const progressBar = this.getProgressBar(25);
+    const timeLeft = this.formatTimeEstimate(prediction.estimatedTimeLeft);
+    
+    let trendIndicator = '';
+    switch (prediction.trend) {
+      case 'accelerating':
+        trendIndicator = '↗️';
+        break;
+      case 'slowing':
+        trendIndicator = '↘️';
+        break;
+      default:
+        trendIndicator = '→';
+    }
+    
+    const confidenceLevel = prediction.confidence > 0.8 ? 'High' : 
+                           prediction.confidence > 0.5 ? 'Medium' : 'Low';
+    
+    return `${progressBar} ${prediction.percentage.toFixed(1)}% ${trendIndicator} ~${timeLeft} (${confidenceLevel})`;
+  }
+
+  /**
+   * Update trend analysis
+   */
+  private updateTrend(): void {
+    if (this.progressHistory.length < 3) {
+      this.trend = 'steady';
+      return;
+    }
+
+    const recent = this.progressHistory.slice(-3);
+    const velocities: number[] = [];
+    
+    for (let i = 1; i < recent.length; i++) {
+      const timeDiff = recent[i].time - recent[i - 1].time;
+      const progressDiff = recent[i].progress - recent[i - 1].progress;
+      
+      if (timeDiff > 0) {
+        velocities.push(progressDiff / timeDiff);
+      }
+    }
+
+    if (velocities.length >= 2) {
+      const velocityChange = velocities[velocities.length - 1] - velocities[0];
+      
+      if (velocityChange > 0.001) {
+        this.trend = 'accelerating';
+      } else if (velocityChange < -0.001) {
+        this.trend = 'slowing';
+      } else {
+        this.trend = 'steady';
+      }
+    }
+  }
+
+  /**
+   * Update confidence level
+   */
+  private updateConfidence(): void {
+    if (this.progressHistory.length < 3) {
+      this.confidence = 0.1;
+      return;
+    }
+
+    // Calculate variance in velocity
+    const velocities: number[] = [];
+    for (let i = 1; i < this.progressHistory.length; i++) {
+      const timeDiff = this.progressHistory[i].time - this.progressHistory[i - 1].time;
+      const progressDiff = this.progressHistory[i].progress - this.progressHistory[i - 1].progress;
+      
+      if (timeDiff > 0) {
+        velocities.push(progressDiff / timeDiff);
+      }
+    }
+
+    if (velocities.length > 1) {
+      const mean = velocities.reduce((a, b) => a + b, 0) / velocities.length;
+      const variance = velocities.reduce((acc, vel) => acc + Math.pow(vel - mean, 2), 0) / velocities.length;
+      
+      // Lower variance = higher confidence
+      this.confidence = Math.max(0.1, Math.min(1.0, 1 - Math.sqrt(variance) * 10));
+    }
+  }
+
+  /**
+   * Update accuracy based on prediction vs actual
+   */
+  private updateAccuracy(): void {
+    if (this.progressHistory.length < 5) {
+      this.accuracy = 0.5;
+      return;
+    }
+
+    // Simple accuracy calculation based on trend consistency
+    const recentTrends = this.progressHistory.slice(-5);
+    let consistentTrends = 0;
+    
+    for (let i = 1; i < recentTrends.length; i++) {
+      const expectedTrend = this.trend;
+      const actualChange = recentTrends[i].progress - recentTrends[i - 1].progress;
+      
+      let actualTrend: 'accelerating' | 'steady' | 'slowing' = 'steady';
+      if (actualChange > 2) actualTrend = 'accelerating';
+      else if (actualChange < -1) actualTrend = 'slowing';
+      
+      if (expectedTrend === actualTrend) {
+        consistentTrends++;
+      }
+    }
+    
+    this.accuracy = consistentTrends / (recentTrends.length - 1);
+  }
+
+  /**
+   * Get performance statistics
+   */
+  public getStats(): SpinnerStats {
+    const elapsed = Date.now() - this.startTime;
+    
+    return {
+      startTime: this.startTime,
+      totalFrames: this.progressHistory.length,
+      averageFrameTime: this.progressHistory.length > 0 ? elapsed / this.progressHistory.length : 0,
+      predictedCompletion: this.startTime + (elapsed / (this.currentProgress / 100))
     };
+  }
+
+  /**
+   * Check if prediction is reliable
+   */
+  public isReliable(): boolean {
+    return this.confidence > 0.3 && this.progressHistory.length >= 3;
+  }
+
+  /**
+   * Get current progress percentage
+   */
+  public getCurrentProgress(): number {
+    return this.currentProgress;
+  }
+
+  /**
+   * Set manual progress for testing
+   */
+  public setProgress(percentage: number): void {
+    this.currentProgress = Math.max(0, Math.min(100, percentage));
+    this.updateProgress(this.currentProgress, 100);
   }
 }

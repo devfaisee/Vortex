@@ -1,257 +1,551 @@
-import chalk from 'chalk';
-import cliCursor from 'cli-cursor';
-import stripAnsi from 'strip-ansi';
-import { VortexOptions, SpinnerType } from './types.js';
-import { TerminalDetector } from './terminal.js';
+import { VortexOptions, SpinnerType, ProgressPrediction, SpinnerStats, PerformanceMetrics } from './types.js';
+import { TerminalDetector, Colors, Cursor } from './terminal.js';
 import { ProgressPredictor } from './predictor.js';
 import { spinners, getAdaptiveSpinner } from './spinners.js';
 
+/**
+ * Vortex - Advanced terminal spinner with progress prediction
+ * Zero dependencies, high performance, professional animations
+ */
 export class Vortex {
   private options: Required<VortexOptions>;
-  private spinner: SpinnerType;
-  private frameIndex: number = 0;
-  private timer: NodeJS.Timeout | null = null;
-  private isSpinning: boolean = false;
-  private terminalDetector: TerminalDetector;
+  private terminal: TerminalDetector;
   private predictor: ProgressPredictor;
+  
+  private isSpinning: boolean = false;
+  private currentFrame: number = 0;
+  private intervalId: NodeJS.Timeout | null = null;
   private startTime: number = 0;
+  private lastRenderTime: number = 0;
+  private frameCount: number = 0;
+  
+  private currentSpinner: SpinnerType;
+  private originalText: string = '';
+  private lastLineLength: number = 0;
+  
+  // Performance tracking
+  private performanceMetrics: PerformanceMetrics = {
+    renderTime: 0,
+    memoryUsage: 0,
+    cpuUsage: 0,
+    frameRate: 60
+  };
 
   constructor(options: VortexOptions = {}) {
-    this.terminalDetector = TerminalDetector.getInstance();
-    this.predictor = new ProgressPredictor();
-    
-    const adaptiveConfig = this.terminalDetector.getAdaptiveConfig();
-    
+    // Set comprehensive default options
     this.options = {
-      text: options.text || 'Loading',
-      spinner: options.spinner || getAdaptiveSpinner(adaptiveConfig.maxWidth, adaptiveConfig.useUnicode),
+      text: options.text || 'Loading...',
+      spinner: options.spinner || 'vortex',
       color: options.color || 'cyan',
-      interval: options.interval || 100,
+      interval: options.interval ?? 150,
       stream: options.stream || process.stderr,
       hideCursor: options.hideCursor !== false,
-      indent: options.indent || 0,
+      indent: options.indent ?? 0,
       discardStdin: options.discardStdin !== false,
       prefixText: options.prefixText || '',
       suffixText: options.suffixText || '',
       predictive: options.predictive !== false,
-      adaptive: options.adaptive !== false
+      adaptive: options.adaptive !== false,
+      gradient: options.gradient || false,
+      rainbow: options.rainbow || false,
+      bold: options.bold || false,
+      dim: options.dim || false
     };
 
-    this.spinner = this.options.spinner;
+    // Initialize components
+    this.terminal = TerminalDetector.getInstance();
+    this.predictor = new ProgressPredictor();
     
-    if (this.options.adaptive) {
-      this.adaptToTerminal();
-    }
+    // Set initial spinner
+    this.currentSpinner = this.getSpinnerConfig();
+    this.originalText = this.options.text;
   }
 
-  private adaptToTerminal(): void {
-    const config = this.terminalDetector.getAdaptiveConfig();
-    
-    if (config.compactMode && this.spinner.adaptive) {
-      this.spinner = spinners.compact;
-    }
-    
-    if (!config.useUnicode && this.spinner.adaptive) {
-      this.spinner = spinners.dots;
-    }
-  }
-
-  private getColoredFrame(frame: string): string {
-    const config = this.terminalDetector.getAdaptiveConfig();
-    
-    if (config.colorMode === 'none') {
-      return frame;
-    }
-    
-    return chalk.hex(this.getColorForMode(config.colorMode))(frame);
-  }
-
-  private getColorForMode(colorMode: string): string {
-    const colors = {
-      basic: '#00FFFF',
-      ansi256: '#00FFFF',
-      truecolor: this.getGradientColor()
-    };
-    
-    return colors[colorMode as keyof typeof colors] || '#00FFFF';
-  }
-
-  private getGradientColor(): string {
-    const time = Date.now() - this.startTime;
-    const hue = (time / 20) % 360;
-    return `hsl(${hue}, 70%, 60%)`;
-  }
-
-  private formatText(): string {
-    const config = this.terminalDetector.getAdaptiveConfig();
-    let text = this.options.text;
-    
-    // Add prediction if enabled
-    if (this.options.predictive) {
-      const prediction = this.predictor.predict();
-      
-      if (prediction.confidence > 0.3) {
-        const timeLeft = this.predictor.formatTimeEstimate(prediction.estimatedTimeLeft);
-        const percentage = Math.round(prediction.percentage);
-        
-        if (percentage > 0 && percentage < 100) {
-          text += ` ${chalk.dim(`(${percentage}%, ~${timeLeft} left)`)}`;
-        }
-      }
-    }
-    
-    // Truncate if too long for terminal
-    const maxLength = config.maxWidth - 10; // Leave space for spinner and padding
-    if (stripAnsi(text).length > maxLength) {
-      text = text.substring(0, maxLength - 3) + '...';
-    }
-    
-    return text;
-  }
-
-  private render(): void {
-    if (!this.isSpinning) return;
-    
-    const frame = this.spinner.frames[this.frameIndex];
-    const coloredFrame = this.getColoredFrame(frame);
-    const formattedText = this.formatText();
-    
-    const indent = ' '.repeat(this.options.indent);
-    const prefix = this.options.prefixText ? `${this.options.prefixText} ` : '';
-    const suffix = this.options.suffixText ? ` ${this.options.suffixText}` : '';
-    
-    const line = `${indent}${prefix}${coloredFrame} ${formattedText}${suffix}`;
-    
-    // Clear current line and write new content
-    this.options.stream.write('\r\x1b[K' + line);
-    
-    this.frameIndex = (this.frameIndex + 1) % this.spinner.frames.length;
-  }
-
+  /**
+   * Start the spinner animation
+   */
   public start(text?: string): this {
-    if (text) {
-      this.options.text = text;
-    }
-    
     if (this.isSpinning) {
       return this;
     }
-    
+
+    if (text) {
+      this.options.text = text;
+      this.originalText = text;
+    }
+
     this.isSpinning = true;
     this.startTime = Date.now();
-    this.frameIndex = 0;
-    this.predictor.reset();
+    this.frameCount = 0;
+    this.currentFrame = 0;
     
+    // Hide cursor if enabled
     if (this.options.hideCursor) {
-      cliCursor.hide(this.options.stream);
+      Cursor.hide();
     }
-    
+
+    // Handle stdin if needed
     if (this.options.discardStdin && process.stdin.isTTY) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
       process.stdin.setEncoding('utf8');
     }
-    
-    this.render();
-    this.timer = setInterval(() => this.render(), this.options.interval);
-    
+
+    // Reset predictor
+    this.predictor.reset();
+
+    // Start animation loop
+    this.startAnimation();
+
     return this;
   }
 
+  /**
+   * Stop the spinner animation
+   */
   public stop(): this {
     if (!this.isSpinning) {
       return this;
     }
-    
+
     this.isSpinning = false;
-    
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+
+    // Clear interval
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
-    
+
+    // Clear the line
+    if (this.options.stream.isTTY) {
+      this.options.stream.write('\r\x1b[K');
+    } else {
+      this.options.stream.write('\r');
+      this.options.stream.write(' '.repeat(this.lastLineLength));
+      this.options.stream.write('\r');
+    }
+
+    // Show cursor if it was hidden
     if (this.options.hideCursor) {
-      cliCursor.show(this.options.stream);
+      Cursor.show();
     }
-    
+
+    // Restore stdin
     if (this.options.discardStdin && process.stdin.isTTY) {
       process.stdin.setRawMode(false);
       process.stdin.pause();
     }
+
+    return this;
+  }
+
+  /**
+   * Update spinner text
+   */
+  public setText(text: string): this {
+    this.options.text = text;
+    return this;
+  }
+
+  /**
+   * Update spinner type
+   */
+  public setSpinner(spinner: string): this {
+    this.options.spinner = spinner;
+    this.currentSpinner = this.getSpinnerConfig();
+    this.currentFrame = 0;
     
-    // Clear the line
-    this.options.stream.write('\r\x1b[K');
+    // Restart animation with new spinner
+    if (this.isSpinning) {
+      this.startAnimation();
+    }
     
     return this;
   }
 
-  public succeed(text?: string): this {
-    this.stop();
-    const successText = text || this.options.text;
-    const indent = ' '.repeat(this.options.indent);
-    const prefix = this.options.prefixText ? `${this.options.prefixText} ` : '';
-    
-    this.options.stream.write(`${indent}${prefix}${chalk.green('✓')} ${successText}\n`);
+  /**
+   * Update spinner color
+   */
+  public setColor(color: string): this {
+    this.options.color = color;
     return this;
   }
 
-  public fail(text?: string): this {
-    this.stop();
-    const failText = text || this.options.text;
-    const indent = ' '.repeat(this.options.indent);
-    const prefix = this.options.prefixText ? `${this.options.prefixText} ` : '';
-    
-    this.options.stream.write(`${indent}${prefix}${chalk.red('✗')} ${failText}\n`);
+  /**
+   * Enable/disable progress prediction
+   */
+  public setPredictive(enabled: boolean): this {
+    this.options.predictive = enabled;
+    if (enabled) {
+      this.predictor.reset();
+    }
     return this;
   }
 
-  public warn(text?: string): this {
-    this.stop();
-    const warnText = text || this.options.text;
-    const indent = ' '.repeat(this.options.indent);
-    const prefix = this.options.prefixText ? `${this.options.prefixText} ` : '';
-    
-    this.options.stream.write(`${indent}${prefix}${chalk.yellow('⚠')} ${warnText}\n`);
-    return this;
-  }
-
-  public info(text?: string): this {
-    this.stop();
-    const infoText = text || this.options.text;
-    const indent = ' '.repeat(this.options.indent);
-    const prefix = this.options.prefixText ? `${this.options.prefixText} ` : '';
-    
-    this.options.stream.write(`${indent}${prefix}${chalk.blue('ℹ')} ${infoText}\n`);
-    return this;
-  }
-
-  public updateProgress(current: number, total?: number): this {
+  /**
+   * Update progress for prediction
+   */
+  public updateProgress(current: number, total: number = 100): this {
     if (this.options.predictive) {
       this.predictor.updateProgress(current, total);
     }
     return this;
   }
 
-  public setText(text: string): this {
-    this.options.text = text;
-    return this;
-  }
-
-  public setSpinner(spinner: string | SpinnerType): this {
-    if (typeof spinner === 'string') {
-      this.spinner = spinners[spinner] || this.spinner;
-    } else {
-      this.spinner = spinner;
+  /**
+   * Simulate progress for demo purposes
+   */
+  public simulateProgress(): this {
+    if (this.options.predictive) {
+      this.predictor.simulateProgress();
     }
     return this;
   }
 
-  public setColor(color: string): this {
-    this.options.color = color;
+  /**
+   * Set manual progress percentage
+   */
+  public setProgress(percentage: number): this {
+    if (this.options.predictive) {
+      this.predictor.setProgress(percentage);
+    }
     return this;
   }
 
-  public get isActive(): boolean {
+  /**
+   * Succeed and stop spinner
+   */
+  public succeed(text?: string): this {
+    this.stop();
+    const successText = text || this.options.text;
+    const symbol = Colors.green('✓');
+    this.writeLine(`${symbol} ${successText}`);
+    return this;
+  }
+
+  /**
+   * Fail and stop spinner
+   */
+  public fail(text?: string): this {
+    this.stop();
+    const failText = text || this.options.text;
+    const symbol = Colors.red('✗');
+    this.writeLine(`${symbol} ${failText}`);
+    return this;
+  }
+
+  /**
+   * Warn and stop spinner
+   */
+  public warn(text?: string): this {
+    this.stop();
+    const warnText = text || this.options.text;
+    const symbol = Colors.yellow('⚠');
+    this.writeLine(`${symbol} ${warnText}`);
+    return this;
+  }
+
+  /**
+   * Info and stop spinner
+   */
+  public info(text?: string): this {
+    this.stop();
+    const infoText = text || this.options.text;
+    const symbol = Colors.blue('ℹ');
+    this.writeLine(`${symbol} ${infoText}`);
+    return this;
+  }
+
+  /**
+   * Get current spinner statistics
+   */
+  public getStats(): SpinnerStats {
+    const elapsed = Date.now() - this.startTime;
+    return {
+      startTime: this.startTime,
+      totalFrames: this.frameCount,
+      averageFrameTime: this.frameCount > 0 ? elapsed / this.frameCount : 0,
+      predictedCompletion: this.predictor.getStats().predictedCompletion
+    };
+  }
+
+  /**
+   * Get performance metrics
+   */
+  public getPerformanceMetrics(): PerformanceMetrics {
+    return { ...this.performanceMetrics };
+  }
+
+  /**
+   * Check if spinner is currently running
+   */
+  public get spinning(): boolean {
     return this.isSpinning;
+  }
+
+  /**
+   * Get current text
+   */
+  public get text(): string {
+    return this.options.text;
+  }
+
+  /**
+   * Start the animation loop
+   */
+  private startAnimation(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+
+    const interval = this.options.interval || this.currentSpinner.interval;
+    
+    this.intervalId = setInterval(() => {
+      if (this.isSpinning) {
+        this.render();
+      }
+    }, interval);
+
+    // Render immediately
+    this.render();
+  }
+
+  /**
+   * Render current frame
+   */
+  private render(): void {
+    const renderStart = Date.now();
+    
+    try {
+      // Update frame
+      this.currentFrame = (this.currentFrame + 1) % this.currentSpinner.frames.length;
+      this.frameCount++;
+
+      // Get current frame
+      const frame = this.currentSpinner.frames[this.currentFrame];
+      
+      // Apply colors and effects
+      const coloredFrame = this.applyEffects(frame);
+      
+      // Format text with progress prediction
+      const formattedText = this.formatText();
+      
+      // Construct full line
+      const line = `${coloredFrame} ${formattedText}`;
+      
+      // Clear current line and write new content
+      if (this.options.stream.isTTY) {
+        this.options.stream.write('\r\x1b[K');
+        this.options.stream.write(line);
+      } else {
+        this.options.stream.write('\r');
+        this.options.stream.write(' '.repeat(this.lastLineLength));
+        this.options.stream.write('\r');
+        this.options.stream.write(line);
+      }
+      
+      this.lastLineLength = this.stripAnsi(line).length;
+      
+      // Update performance metrics
+      this.updatePerformanceMetrics(renderStart);
+      
+      // Update progress prediction if enabled
+      if (this.options.predictive) {
+        this.simulateProgress();
+      }
+      
+    } catch (error) {
+      // Graceful error handling
+      console.error('Vortex render error:', error);
+    }
+  }
+
+  /**
+   * Apply visual effects to frame
+   */
+  private applyEffects(frame: string): string {
+    let result = frame;
+
+    // Apply rainbow effect
+    if (this.options.rainbow) {
+      result = Colors.rainbow(result);
+    }
+    // Apply gradient effect
+    else if (this.options.gradient) {
+      result = Colors.gradient(result, this.options.color, 'white');
+    }
+    // Apply regular color
+    else {
+      result = Colors.colorize(result, this.options.color);
+    }
+
+    // Apply text effects
+    if (this.options.bold) {
+      result = Colors.bold(result);
+    }
+    
+    if (this.options.dim) {
+      result = Colors.dim(result);
+    }
+
+    return result;
+  }
+
+  /**
+   * Format text with progress prediction
+   */
+  private formatText(): string {
+    let text = this.options.text;
+
+    // Add progress prediction if enabled
+    if (this.options.predictive && this.predictor.isReliable()) {
+      const prediction = this.predictor.predict();
+      const progressBar = this.predictor.getProgressBar(20);
+      const timeLeft = this.predictor.formatTimeEstimate(prediction.estimatedTimeLeft);
+      
+      // Create detailed progress display
+      const progressInfo = Colors.dim(
+        ` [${progressBar}] ${prediction.percentage.toFixed(1)}% ~${timeLeft}`
+      );
+      
+      // Add trend indicator
+      let trendIndicator = '';
+      switch (prediction.trend) {
+        case 'accelerating':
+          trendIndicator = Colors.green(' ↗');
+          break;
+        case 'slowing':
+          trendIndicator = Colors.yellow(' ↘');
+          break;
+        default:
+          trendIndicator = Colors.blue(' →');
+      }
+      
+      text += progressInfo + trendIndicator;
+    }
+
+    return text;
+  }
+
+  /**
+   * Get spinner configuration
+   */
+  private getSpinnerConfig(): SpinnerType {
+    // First try to get the specific spinner requested
+    const spinner = spinners[this.options.spinner as keyof typeof spinners];
+    if (spinner) {
+      return spinner;
+    }
+    
+    // If spinner not found and adaptive is enabled, use adaptive selection
+    if (this.options.adaptive) {
+      return getAdaptiveSpinner(
+        this.terminal.width,
+        this.terminal.supportsUnicode(),
+        this.terminal.supportsEmoji()
+      );
+    }
+    
+    // Fallback to vortex
+    console.warn(`Unknown spinner: ${this.options.spinner}, falling back to 'vortex'`);
+    return spinners.vortex;
+  }
+
+  /**
+   * Clear current line
+   */
+  private clearLine(): void {
+    if (this.lastLineLength > 0) {
+      Cursor.clearLine();
+      Cursor.moveToColumn(0);
+    }
+  }
+
+  /**
+   * Write line to output
+   */
+  private writeLine(text: string, newline: boolean = true): void {
+    this.lastLineLength = this.stripAnsi(text).length;
+    
+    if (newline) {
+      this.options.stream.write(text + '\n');
+    } else {
+      this.options.stream.write(text);
+    }
+  }
+
+  /**
+   * Strip ANSI escape codes for length calculation
+   */
+  private stripAnsi(text: string): string {
+    return text.replace(/\u001b\[[0-9;]*m/g, '');
+  }
+
+  /**
+   * Update performance metrics
+   */
+  private updatePerformanceMetrics(renderStart: number): void {
+    const renderTime = Date.now() - renderStart;
+    this.performanceMetrics.renderTime = renderTime;
+    
+    // Calculate frame rate
+    const now = Date.now();
+    if (this.lastRenderTime > 0) {
+      const frameDuration = now - this.lastRenderTime;
+      this.performanceMetrics.frameRate = Math.round(1000 / frameDuration);
+    }
+    this.lastRenderTime = now;
+    
+    // Estimate memory usage (simplified)
+    if (process.memoryUsage) {
+      this.performanceMetrics.memoryUsage = process.memoryUsage().heapUsed;
+    }
+  }
+
+  /**
+   * Create a new Vortex instance with options
+   */
+  public static create(options?: VortexOptions): Vortex {
+    return new Vortex(options);
+  }
+
+  /**
+   * Quick start method for simple use cases
+   */
+  public static start(text: string, options?: VortexOptions): Vortex {
+    const spinner = new Vortex({ ...options, text });
+    return spinner.start();
+  }
+
+  /**
+   * Quick success method
+   */
+  public static succeed(text: string, options?: VortexOptions): void {
+    const spinner = new Vortex(options);
+    spinner.succeed(text);
+  }
+
+  /**
+   * Quick fail method
+   */
+  public static fail(text: string, options?: VortexOptions): void {
+    const spinner = new Vortex(options);
+    spinner.fail(text);
+  }
+
+  /**
+   * Quick warn method
+   */
+  public static warn(text: string, options?: VortexOptions): void {
+    const spinner = new Vortex(options);
+    spinner.warn(text);
+  }
+
+  /**
+   * Quick info method
+   */
+  public static info(text: string, options?: VortexOptions): void {
+    const spinner = new Vortex(options);
+    spinner.info(text);
   }
 }
